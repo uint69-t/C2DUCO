@@ -26,23 +26,6 @@ struct job {
     uint32_t diff;
 };
 
-void extract_between(char *in, char *p1, char *p2, char *out) {
-    char *i1;
-
-    uint16_t pl1;
-    uint16_t mlen;
-
-    i1 = strstr(in, p1);
-    if (i1 != NULL) {
-        pl1 = strlen(p1);
-        if (p2 != NULL) {
-            mlen = strstr(i1 + pl1, p2) - (i1 + pl1);
-            memcpy(out, i1 + pl1, mlen);
-            out[mlen] = '\0';
-        }
-    }
-}
-
 /* TODO: SPLIT THIS INTO MORE FUNCTIONS, OPTIMIZE MEMORY ALLOCATION */
 void sha1digest(uint8_t *data, uint16_t databytes, char *hexdigest) {
     uint32_t W[80];
@@ -165,11 +148,11 @@ void sha1digest(uint8_t *data, uint16_t databytes, char *hexdigest) {
 int getpool(void) {
     struct hostcon server;
     struct hostcon pool;
-    char pool_ip[16];
-    char pool_port[6];
+
+    char *ptr;
+    uint16_t mlen;
 
     server.sock = socket(AF_INET, SOCK_STREAM, 0);
-
     server.addr.sin_family = AF_INET;
     server.addr.sin_port = htons(80);
     server.addr.sin_addr.s_addr = inet_addr("51.15.127.80");
@@ -177,7 +160,7 @@ int getpool(void) {
     connect(server.sock,
             (struct sockaddr *) &server.addr,
             sizeof(server.addr));
-    
+
     strcpy((char *) buf, "GET /getPool HTTP/1.1\r\n"
                          "Host: 51.15.127.80\r\n"
                          "Content-Type: text/plain\r\n\r\n");
@@ -185,19 +168,26 @@ int getpool(void) {
     send(server.sock, buf, 71, 0);
     memset(buf, 0, BUF_LEN);
     recv(server.sock, buf, BUF_LEN, 0);
-    
+
     close(server.sock);
 
-    extract_between((char *) buf, "\x22ip\x22:\x22", "\x22", pool_ip);
-    extract_between((char *) buf, "\x22port\x22:", ",", pool_port);
+    pool.sock = socket(AF_INET, SOCK_STREAM, 0);
+    pool.addr.sin_family = AF_INET;
+
+    ptr = strstr((char *) buf, "\x22ip\x22:\x22");
+    mlen = strstr(ptr + 6, "\x22") - (ptr + 6);
+    memcpy(buf, ptr + 6, mlen);
+    buf[mlen] = '\0';
+    pool.addr.sin_addr.s_addr = inet_addr((char *) buf);
+
+    buf[mlen] = ' ';
+    ptr = strstr((char *) buf, "\x22port\x22:");
+    mlen = strstr(ptr + 7, ",") - (ptr + 7);
+    memcpy(buf, ptr + 7, mlen);
+    buf[mlen] = '\0';
+    pool.addr.sin_port = htons(strtoul((char *) buf, NULL, 10));
 
     memset(buf, 0, BUF_LEN);
-
-    pool.sock = socket(AF_INET, SOCK_STREAM, 0);
-
-    pool.addr.sin_family = AF_INET;
-    pool.addr.sin_port = htons(strtoul(pool_port, NULL, 10));
-    pool.addr.sin_addr.s_addr = inet_addr(pool_ip);
 
     connect(pool.sock,
             (struct sockaddr *) &pool.addr,
@@ -209,7 +199,7 @@ int getpool(void) {
 void getjob(int sock, char *user, char *diff, char *key, struct job *job) {
     sprintf((char *) buf, "JOB,%s,%s,%s", user, diff, key);
 
-    send(sock, buf, 10 + strlen(user) + strlen(key), 0);
+    send(sock, buf, 6 + strlen(user) + strlen(diff) + strlen(key), 0);
     memset(buf, 0, BUF_LEN);
     recv(sock, buf, BUF_LEN, 0);
 
@@ -222,7 +212,7 @@ void getjob(int sock, char *user, char *diff, char *key, struct job *job) {
 
 void sendjob(int sock, uint32_t hashrate, char *result) {
     sprintf((char *) buf, "%s,%u,C2DUCO", result, hashrate);
-	send(sock, buf, strlen((char *) buf), 0);
+    send(sock, buf, strlen((char *) buf), 0);
     memset(buf, 0, BUF_LEN);
 }
 
@@ -269,11 +259,11 @@ int main(int argc, char **argv) {
                 sendjob(sock, hashrate, (char *) buf + 40);
 
                 recv(sock, buf, BUF_LEN, 0);
-                printf("Found! diff: %u, hashrate: %u -> %s",
-                       job.diff, hashrate, buf);
-                       
-				break;
-			}
+                printf("Found! diff: %uk, hashrate: %.2fMH/s -> %s",
+                       job.diff / 1000, hashrate / 1000.0f / 1000.0f, buf);
+
+                break;
+            }
         }
     }
 
