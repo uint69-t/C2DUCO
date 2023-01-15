@@ -23,7 +23,7 @@ struct hostcon {
 struct job {
     uint8_t work[40];
     uint8_t expected[40];
-    uint64_t diff;
+    uint32_t diff;
 };
 
 void extract_between(char *in, char *p1, char *p2, char *out) {
@@ -43,17 +43,8 @@ void extract_between(char *in, char *p1, char *p2, char *out) {
     }
 }
 
-uint64_t str2u64(char *str) {
-    uint64_t result = 0;
-
-    while (str < str + strlen(str)) {
-        result = (result << 1) + (result << 3) + *(str++) - '0';
-    }
-
-    return result;
-}
-
-void sha1digest(uint8_t *data, uint64_t databytes, char *hexdigest) {
+/* TODO: SPLIT THIS INTO MORE FUNCTIONS, OPTIMIZE MEMORY ALLOCATION */
+void sha1digest(uint8_t *data, uint16_t databytes, char *hexdigest) {
     uint32_t W[80];
     uint32_t H[] = { 0x67452301,
                      0xEFCDAB89,
@@ -75,6 +66,7 @@ void sha1digest(uint8_t *data, uint64_t databytes, char *hexdigest) {
 
     int32_t wcount;
     uint32_t temp;
+    uint64_t databits = ((uint64_t) databytes) * 8;
     uint32_t loopcount = (databytes + 8) / 64 + 1;
     uint32_t tailbytes = 64 * loopcount - databytes;
     uint8_t datatail[128] = {0};
@@ -87,14 +79,14 @@ void sha1digest(uint8_t *data, uint64_t databytes, char *hexdigest) {
         Add bit '1' to end of message (big-endian)
         Add 64-bit message length in bits at very end (big-endian) */
     datatail[0] = 0x80;
-    datatail[tailbytes - 8] = (uint8_t) ((databytes * 8) >> 56 & 0xFF);
-    datatail[tailbytes - 7] = (uint8_t) ((databytes * 8) >> 48 & 0xFF);
-    datatail[tailbytes - 6] = (uint8_t) ((databytes * 8) >> 40 & 0xFF);
-    datatail[tailbytes - 5] = (uint8_t) ((databytes * 8) >> 32 & 0xFF);
-    datatail[tailbytes - 4] = (uint8_t) ((databytes * 8) >> 24 & 0xFF);
-    datatail[tailbytes - 3] = (uint8_t) ((databytes * 8) >> 16 & 0xFF);
-    datatail[tailbytes - 2] = (uint8_t) ((databytes * 8) >> 8 & 0xFF);
-    datatail[tailbytes - 1] = (uint8_t) ((databytes * 8) >> 0 & 0xFF);
+    datatail[tailbytes - 8] = (uint8_t) (databits >> 56 & 0xFF);
+    datatail[tailbytes - 7] = (uint8_t) (databits >> 48 & 0xFF);
+    datatail[tailbytes - 6] = (uint8_t) (databits >> 40 & 0xFF);
+    datatail[tailbytes - 5] = (uint8_t) (databits >> 32 & 0xFF);
+    datatail[tailbytes - 4] = (uint8_t) (databits >> 24 & 0xFF);
+    datatail[tailbytes - 3] = (uint8_t) (databits >> 16 & 0xFF);
+    datatail[tailbytes - 2] = (uint8_t) (databits >> 8 & 0xFF);
+    datatail[tailbytes - 1] = (uint8_t) (databits >> 0 & 0xFF);
 
     /* Process each 512-bit chunk */
     for (lidx = 0; lidx < loopcount; lidx++) {
@@ -223,26 +215,25 @@ void getjob(int sock, char *user, char *diff, char *key, struct job *job) {
 
     memcpy(job->work, buf, 40);
     memcpy(job->expected, buf + 41, 40);
-    job->diff = str2u64((char *) buf + 82);
+    job->diff = strtoul((char *) buf + 82, NULL, 10);
 
     memset(buf, 0, BUF_LEN);
 }
 
-void sendjob(int sock, uint64_t hashrate, char *result) {
-    sprintf((char *) buf, "%s,%" PRIu64 ",C2DUCO", result, hashrate);
+void sendjob(int sock, uint32_t hashrate, char *result) {
+    sprintf((char *) buf, "%s,%u,C2DUCO", result, hashrate);
 	send(sock, buf, strlen((char *) buf), 0);
     memset(buf, 0, BUF_LEN);
-	recv(sock, buf, BUF_LEN, 0);
 }
 
 int main(int argc, char **argv) {
     int sock;
     struct job job;
-    uint64_t result;
+    uint32_t result;
 
     time_t start_t;
     time_t end_t;
-    uint64_t hashrate;
+    uint32_t hashrate;
 
     if (argc < 4) {
         printf("USAGE:\n");
@@ -265,7 +256,7 @@ int main(int argc, char **argv) {
 
         time(&start_t);
         for (result = 0; result < 100 * job.diff + 1; result++) {
-            sprintf((char *) buf + 40, "%" PRIu64, result);
+            sprintf((char *) buf + 40, "%u", result);
             sha1digest(buf, strlen((char *) buf), (char *) buf + BUF_LEN - 40);
             if (memcmp(buf + BUF_LEN - 40, job.expected, 40) == 0) {
                 time(&end_t);
@@ -276,7 +267,9 @@ int main(int argc, char **argv) {
                 }
 
                 sendjob(sock, hashrate, (char *) buf + 40);
-                printf("Found! diff: %" PRIu64 ", hashrate: %" PRIu64 " -> %s",
+
+                recv(sock, buf, BUF_LEN, 0);
+                printf("Found! diff: %u, hashrate: %u -> %s",
                        job.diff, hashrate, buf);
                        
 				break;
